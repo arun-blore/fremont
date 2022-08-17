@@ -9,11 +9,18 @@
 #include <initializer_list>
 #include <iostream>
 #include <new>
+#include <immintrin.h>
 
-const int naive_block_multiply = 0, cacheline_col_multiply = 1, cacheline_block_multiply = 2, transp_block_multiply = 3;
+const int naive_block_multiply = 0;
+const int cacheline_col_multiply = 1;
+const int cacheline_block_multiply = 2;
+const int transp_block_multiply = 3;
+const int zmm_32x32_multiply = 4;
 const int bytes_per_cacheline = 64;
 
 namespace my {
+    void prefetch (void *base, int blk_w, int blk_h, int pitch);
+
     template <class T>
     class Mat_iterator : public std::iterator<std::forward_iterator_tag, T> {
         T *m_ptr{nullptr};
@@ -67,6 +74,9 @@ namespace my {
         }
         bool operator!=(Mat_row_col_iterator<T> const& other) {
             return (other.m_ptr != m_ptr);
+        }
+        void operator+=(int inc) {
+            m_ptr+=inc;
         }
     };
 
@@ -130,6 +140,7 @@ namespace my {
         Mat<T> block_transpose_multiply(Mat<T> const &other) const;
         Mat<T> transpose() const;
         void opt_transp_multiply_add(Mat<T> const& other, Mat<T> &out) const;
+        void madd_32x32_zmm(Mat<T> &other, Mat<T> &out);
     };
 
     template <class T>
@@ -306,23 +317,247 @@ namespace my {
     }
 
     template <class T>
+    void Mat<T>::madd_32x32_zmm(Mat<T> &other, Mat<T> &out) {
+        assert(rows() == 32);
+        assert(cols() == 32);
+        assert(other.rows() == 32);
+        assert(other.cols() == 32);
+        assert(out.rows() == 32);
+        assert(out.cols() == 32);
+
+        const int zmm_w = 64/sizeof(T);
+
+        const int blk_w = 32;
+        const int blk_h = 32*other.m_pitch;
+        // prefetch(m_ptr+blk_w      , 32, 32, m_pitch);
+        // prefetch(other.m_ptr+blk_h, 32, 32, other.m_pitch);
+        // prefetch(m_ptr      , 32, 32, m_pitch);
+        // prefetch(other.m_ptr, 32, 32, other.m_pitch);
+        // prefetch(out.m_ptr  , 32, 32, out.m_pitch);
+
+        // printf ("m2 start address %0x\n", other.m_ptr);
+        // printf ("Prefetching addr %0x\n", other.m_ptr+blk_h);
+
+        for(int m1_row = 0; m1_row < rows(); m1_row++) {
+            auto m1_iter = row_begin(m1_row);
+            // Load outputs
+            auto out_iter = out.row_begin(m1_row);
+            __m512d   out_0 = _mm512_load_pd(&(*out_iter));
+            out_iter+=zmm_w;
+            __m512d   out_1 = _mm512_load_pd(&(*out_iter));
+            out_iter+=zmm_w;
+            __m512d   out_2 = _mm512_load_pd(&(*out_iter));
+            out_iter+=zmm_w;
+            __m512d   out_3 = _mm512_load_pd(&(*out_iter));
+            out_iter+=zmm_w;
+
+            for(int m2_row = 0; m2_row < other.rows(); m2_row+=4) {
+                auto m2_iter_0 = other.row_begin(m2_row+0);
+                auto m2_iter_1 = other.row_begin(m2_row+1);
+                auto m2_iter_2 = other.row_begin(m2_row+2);
+                auto m2_iter_3 = other.row_begin(m2_row+3);
+
+                // Load 4 m1 values
+                __m512d m1_0 = _mm512_set1_pd(*m1_iter);
+                ++m1_iter;
+                __m512d m1_1 = _mm512_set1_pd(*m1_iter);
+                ++m1_iter;
+                __m512d m1_2 = _mm512_set1_pd(*m1_iter);
+                ++m1_iter;
+                __m512d m1_3 = _mm512_set1_pd(*m1_iter);
+                ++m1_iter;
+
+                // Load 4 rows of m2 (16 zmms)
+                __m512d m2_00 = _mm512_load_pd(&(*m2_iter_0));
+                m2_iter_0+=zmm_w;
+                __m512d m2_01 = _mm512_load_pd(&(*m2_iter_0));
+                m2_iter_0+=zmm_w;
+                __m512d m2_02 = _mm512_load_pd(&(*m2_iter_0));
+                m2_iter_0+=zmm_w;
+                __m512d m2_03 = _mm512_load_pd(&(*m2_iter_0));
+                m2_iter_0+=zmm_w;
+
+                __m512d m2_10 = _mm512_load_pd(&(*m2_iter_1));
+                m2_iter_1+=zmm_w;
+                __m512d m2_11 = _mm512_load_pd(&(*m2_iter_1));
+                m2_iter_1+=zmm_w;
+                __m512d m2_12 = _mm512_load_pd(&(*m2_iter_1));
+                m2_iter_1+=zmm_w;
+                __m512d m2_13 = _mm512_load_pd(&(*m2_iter_1));
+                m2_iter_1+=zmm_w;
+
+                __m512d m2_20 = _mm512_load_pd(&(*m2_iter_2));
+                m2_iter_2+=zmm_w;
+                __m512d m2_21 = _mm512_load_pd(&(*m2_iter_2));
+                m2_iter_2+=zmm_w;
+                __m512d m2_22 = _mm512_load_pd(&(*m2_iter_2));
+                m2_iter_2+=zmm_w;
+                __m512d m2_23 = _mm512_load_pd(&(*m2_iter_2));
+                m2_iter_2+=zmm_w;
+
+                __m512d m2_30 = _mm512_load_pd(&(*m2_iter_3));
+                m2_iter_3+=zmm_w;
+                __m512d m2_31 = _mm512_load_pd(&(*m2_iter_3));
+                m2_iter_3+=zmm_w;
+                __m512d m2_32 = _mm512_load_pd(&(*m2_iter_3));
+                m2_iter_3+=zmm_w;
+                __m512d m2_33 = _mm512_load_pd(&(*m2_iter_3));
+                m2_iter_3+=zmm_w;
+
+                out_0 = _mm512_fmadd_pd(m1_0, m2_00, out_0);
+                out_1 = _mm512_fmadd_pd(m1_0, m2_01, out_1);
+                out_2 = _mm512_fmadd_pd(m1_0, m2_02, out_2);
+                out_3 = _mm512_fmadd_pd(m1_0, m2_03, out_3);
+
+                out_0 = _mm512_fmadd_pd(m1_1, m2_10, out_0);
+                out_1 = _mm512_fmadd_pd(m1_1, m2_11, out_1);
+                out_2 = _mm512_fmadd_pd(m1_1, m2_12, out_2);
+                out_3 = _mm512_fmadd_pd(m1_1, m2_13, out_3);
+
+                out_0 = _mm512_fmadd_pd(m1_2, m2_20, out_0);
+                out_1 = _mm512_fmadd_pd(m1_2, m2_21, out_1);
+                out_2 = _mm512_fmadd_pd(m1_2, m2_22, out_2);
+                out_3 = _mm512_fmadd_pd(m1_2, m2_23, out_3);
+
+                out_0 = _mm512_fmadd_pd(m1_3, m2_30, out_0);
+                out_1 = _mm512_fmadd_pd(m1_3, m2_31, out_1);
+                out_2 = _mm512_fmadd_pd(m1_3, m2_32, out_2);
+                out_3 = _mm512_fmadd_pd(m1_3, m2_33, out_3);
+
+            }
+            out_iter = out.row_begin(m1_row);
+            _mm512_store_pd(&(*out_iter), out_0);
+            out_iter+=zmm_w;
+            _mm512_store_pd(&(*out_iter), out_1);
+            out_iter+=zmm_w;
+            _mm512_store_pd(&(*out_iter), out_2);
+            out_iter+=zmm_w;
+            _mm512_store_pd(&(*out_iter), out_3);
+            out_iter+=zmm_w;
+        }
+    }
+
+#if 0
+    template <class T>
+    // __attribute__((optimize("unroll-loops")))
     void Mat<T>::row_scalar_multiply_add(T scalar, Mat<T> &out) const {
         assert(rows() == 1);
         assert(out.rows() == 1);
 
         auto iter = row_begin(0);
         auto out_iter = out.row_begin(0);
-        #pragma omp unroll partial(8)
+        #pragma GCC unroll 32
+        #pragma GCC ivdep
         for(; iter != row_end(0); ++iter, ++out_iter) {
             *out_iter += ((*iter) * scalar);
         }
     }
+#else
+    template <class T>
+    void Mat<T>::row_scalar_multiply_add(T scalar, Mat<T> &out) const {
+        const int unroll_amt = 16;
+        assert(rows() == 1);
+        assert(out.rows() == 1);
+        assert(cols()%unroll_amt == 0);
+        assert(out.cols()%unroll_amt == 0);
+
+        auto iter = row_begin(0);
+        auto out_iter_read = out.row_begin(0);
+        auto out_iter_write = out.row_begin(0);
+        auto out_iter = out.row_begin(0);
+        #pragma ivdep
+        /*
+        for(; iter != row_end(0);) {
+            T v0 = *iter; ++iter;
+            T v1 = *iter; ++iter;
+            T v2 = *iter; ++iter;
+            T v3 = *iter; ++iter;
+            T v4 = *iter; ++iter;
+            T v5 = *iter; ++iter;
+            T v6 = *iter; ++iter;
+            T v7 = *iter; ++iter;
+            T o0 = *out_iter_read; ++out_iter_read;
+            T o1 = *out_iter_read; ++out_iter_read;
+            T o2 = *out_iter_read; ++out_iter_read;
+            T o3 = *out_iter_read; ++out_iter_read;
+            T o4 = *out_iter_read; ++out_iter_read;
+            T o5 = *out_iter_read; ++out_iter_read;
+            T o6 = *out_iter_read; ++out_iter_read;
+            T o7 = *out_iter_read; ++out_iter_read;
+            o0 += (v0 * scalar);
+            o1 += (v1 * scalar);
+            o2 += (v2 * scalar);
+            o3 += (v3 * scalar);
+            o4 += (v4 * scalar);
+            o5 += (v5 * scalar);
+            o6 += (v6 * scalar);
+            o7 += (v7 * scalar);
+            *out_iter_write = o0; ++out_iter_write;
+            *out_iter_write = o1; ++out_iter_write;
+            *out_iter_write = o2; ++out_iter_write;
+            *out_iter_write = o3; ++out_iter_write;
+            *out_iter_write = o4; ++out_iter_write;
+            *out_iter_write = o5; ++out_iter_write;
+            *out_iter_write = o6; ++out_iter_write;
+            *out_iter_write = o7; ++out_iter_write;
+        }
+        */
+        for (; iter != row_end(0);) {
+            alignas(64) T in[unroll_amt], out[unroll_amt];
+            for (int i = 0; i < unroll_amt; i++) {
+                in[i] = *iter; ++iter;
+                // out[i] = *out_iter_read; ++out_iter_read;
+            }
+            // for (int i = 0; i < 8; i++) {
+            //     out[i] += in[i] * scalar;
+            // }
+            for (int i = 0; i < unroll_amt; i++) {
+                *out_iter_write += in[i]*scalar; ++out_iter_write;
+            }
+            // *out_iter_write = in[0] * scalar + out[0]; ++out_iter_write;
+            // *out_iter_write = in[1] * scalar + out[1]; ++out_iter_write;
+            // *out_iter_write = in[2] * scalar + out[2]; ++out_iter_write;
+            // *out_iter_write = in[3] * scalar + out[3]; ++out_iter_write;
+            // *out_iter_write = in[4] * scalar + out[4]; ++out_iter_write;
+            // *out_iter_write = in[5] * scalar + out[5]; ++out_iter_write;
+            // *out_iter_write = in[6] * scalar + out[6]; ++out_iter_write;
+            // *out_iter_write = in[7] * scalar + out[7]; ++out_iter_write;
+        }
+    }
+#endif
+
+    /*
+    template <class T>
+    template <int U>
+    void Mat<T>::row_scalar_multiply_add(T scalar, Mat<T> &out) const {
+        assert(rows() == 1);
+        assert(out.rows() == 1);
+
+        auto iter = row_begin(0);
+        auto out_iter_read  = out.row_begin(0);
+        auto out_iter_write = out.row_begin(0);
+        // #pragma omp unroll partial(8)
+        #pragma ivdep
+
+        T in[U], out[U];
+        for (int i = 0; i < U; ++iter, ++out_iter_read, ++i) {
+            in[i]  = *iter;
+            out[i] = *out_iter_read;
+        }
+
+        for (int i = 0; i < U; ++i, ++out_iter_write) {
+            T tmp = out[i] + in[i] * scalar;
+            *out_iter_write = tmp;
+        }
+    }
+    */
 
     template <class T>
     void Mat<T>::opt_small_multiply(Mat<T> const& other, Mat<T> &out) const {
         assert(m_cols == other.m_rows);
 
-        constexpr int nums_per_cacheline = bytes_per_cacheline/sizeof(T);
+        // constexpr int nums_per_cacheline = bytes_per_cacheline/sizeof(T);
+        constexpr int nums_per_cacheline = 32;
 
         assert(cols() % nums_per_cacheline == 0);
         assert(rows() % nums_per_cacheline == 0);
@@ -461,6 +696,8 @@ namespace my {
                         submat1.opt_32x32_block_multiply_add(submat2, submat_out);
                     else if (block_mult_option == transp_block_multiply)
                         submat1.opt_32x32_block_multiply_add(submat2, submat_out);
+                    else if (block_mult_option == zmm_32x32_multiply)
+                        submat1.madd_32x32_zmm(submat2, submat_out);
                 }
             }
         }
@@ -511,6 +748,30 @@ namespace my {
     template <class T>
     Mat<T> Mat<T>::submat (int start_row, int start_col, int rows, int cols) const {
         return Mat(&m_ptr[start_row*m_pitch+start_col], rows, cols, m_pitch);
+    }
+
+    void prefetch (void *base, int blk_w, int blk_h, int pitch) {
+        const int cacheline_bytes = 64;
+        const int doubles_per_cacheline = cacheline_bytes/sizeof(double);
+        // const int zmm_bytes = 64;
+        // const int doubles_per_zmm_reg = zmm_bytes/sizeof(double);
+        // assert(doubles_per_zmm_reg == 8);
+        assert(doubles_per_cacheline == 8);
+        assert(blk_w == 32);
+        assert(blk_h == 32);
+
+        // alignas(64) long vindex_base[doubles_per_zmm_reg] = {0, 8, 16, 24, 32, 40, 48, 56};
+        // __m512i vindex = _mm512_load_epi64(vindex_base);
+
+        for (int row = 0; row < blk_h; row++) {
+            for (int col = 0; col < blk_w; col+=doubles_per_cacheline) {
+                // _mm512_prefetch_i64gather_pd (vindex, base, 1, _MM_HINT_T1);
+                // base+=zmm_bytes;
+                _mm_prefetch(base, _MM_HINT_T0);
+                base+=cacheline_bytes;
+            }
+            base+=((pitch-blk_w)*sizeof(double));
+        }
     }
 }
 

@@ -14,6 +14,7 @@ T random_mat(int rows, int cols) {
     return m;
 }
 
+#ifdef ALL_TESTS
 bool test_constructors() {
     my::Mat<int> m1;
     my::Mat<int> m2(10,10);
@@ -146,6 +147,7 @@ bool test_mul() {
 
     return true;
 }
+#endif
 
 template <class T>
 bool test_mult_perf(int rows, int cols) {
@@ -156,9 +158,11 @@ bool test_mult_perf(int rows, int cols) {
     STOP_CLOCK;
     int duration = TIME_ELAPSED;
     std::cout << "Time elapsed = " << duration << " us.\n";
+    std::cout << "m3(0,0) = " << m3(0,0) << " m3(rows-1,cols-1) = " << m3(rows-1,rows-1) << std::endl;
     return true;
 }
 
+#ifdef ALL_TESTS
 template <class T>
 bool test_add_perf(int rows, int cols) {
     T m1(random_mat<T>(rows, cols)), m2(random_mat<T>(cols, rows));
@@ -215,6 +219,7 @@ bool test_block_mult(int rows, int cols) {
     else
         return false;
 }
+#endif
 
 template <int block_mult_option>
 bool test_block_mult_perf(int rows, int cols) {
@@ -226,6 +231,7 @@ bool test_block_mult_perf(int rows, int cols) {
     my::Mat<T> m3 = m1.block_multiply<block_mult_option>(m2);
     STOP_CLOCK;
     std::cout << "Time elapsed (block multiply) = " << TIME_ELAPSED << " us.\n";
+    std::cout << "m3(0,0) = " << m3(0,0) << " m3(rows-1,cols-1) = " << m3(rows-1,rows-1) << std::endl;
 
     // my::Mat<int> m4 = m1*m2;
 
@@ -235,6 +241,7 @@ bool test_block_mult_perf(int rows, int cols) {
     //     return false;
 }
 
+#ifdef ALL_TESTS
 template <class T>
 bool test_naive_mult_perf() {
     my::Mat<T> m1(random_mat<my::Mat<T>>(1980,3960));
@@ -333,6 +340,7 @@ bool test_transp_multiply_add() {
 
     return (m3 == m4);
 }
+#endif
 
 int main(int argc, char **argv) {
     int test_num = 0;
@@ -341,6 +349,7 @@ int main(int argc, char **argv) {
     }
 
     switch(test_num) {
+#ifdef ALL_TESTS
         case  0:
         case  1: RUN_TEST(test_constructors); if(test_num) break;
         case  2: RUN_TEST(test_set_element); if(test_num) break;
@@ -376,12 +385,18 @@ int main(int argc, char **argv) {
         case 27: RUN_TEST1(test_mult_perf<Eigen::MatrixXd>(1000,10000)); if(test_num) break;
         //case 28: RUN_TEST (test_block_mult_perf<double>); if(test_num) break;
         case 29: RUN_TEST (test_naive_mult_perf<double>); if(test_num) break;
+#endif
 
-        case 100: RUN_TEST1(test_mult_perf<Eigen::MatrixXd>(2048,4096)); if(test_num) break;
+        // case 100: RUN_TEST1(test_mult_perf<Eigen::MatrixXd>(2048,4096)); if(test_num) break;
+#ifdef ALL_TESTS
         case 101: RUN_TEST1(test_mult_perf<my::Mat<double>>(2048,4096)); if(test_num) break;
         case 102: RUN_TEST1(test_block_mult_perf<naive_block_multiply>(2048,4096)); if(test_num) break;
-        case 103: RUN_TEST1(test_block_mult_perf<cacheline_col_multiply>(2048,4096)); if(test_num) break;
+#endif
+        // case 103: RUN_TEST1(test_block_mult_perf<cacheline_col_multiply>(2048,4096)); if(test_num) break;
+        case 107: RUN_TEST1(test_block_mult_perf<zmm_32x32_multiply>(2048,4096)); if(test_num) break;
+#ifdef ALL_TESTS
         case 104: RUN_TEST1(test_block_mult_perf<cacheline_block_multiply>(2048,4096)); if(test_num) break;
+        case 106: RUN_TEST1(test_block_mult_perf<cacheline_block_multiply>(128,128)); if(test_num) break;
         case 105: RUN_TEST1(test_block_mult_perf<transp_block_multiply>(2048,4096)); if(test_num) break;
         case 110: RUN_TEST1(test_block_transp_mult_perf<double>(2048,4096)); if(test_num) break;
 
@@ -411,6 +426,7 @@ int main(int argc, char **argv) {
         case 41: RUN_TEST1(test_add_perf<Eigen::MatrixXd>(1,100000000)); if (test_num) break;
         case 42: RUN_TEST1(test_add_perf<my::Mat<double>>(1000,1000)); if (test_num) break;
         case 43: RUN_TEST1(test_add_perf<Eigen::MatrixXd>(1000,1000)); if (test_num) break;
+#endif
     }
 
     return 0;
