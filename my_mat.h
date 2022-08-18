@@ -10,6 +10,8 @@
 #include <iostream>
 #include <new>
 #include <immintrin.h>
+#include "my_bl_mat.h"
+#include <cstdio>
 
 const int naive_block_multiply = 0;
 const int cacheline_col_multiply = 1;
@@ -141,6 +143,8 @@ namespace my {
         Mat<T> transpose() const;
         void opt_transp_multiply_add(Mat<T> const& other, Mat<T> &out) const;
         void madd_32x32_zmm(Mat<T> &other, Mat<T> &out);
+        Mat<T> contiguous_copy();
+        Mat<T> bl_block_multiply(bl_mat<T>& other);
     };
 
     template <class T>
@@ -338,6 +342,9 @@ namespace my {
         // printf ("m2 start address %0x\n", other.m_ptr);
         // printf ("Prefetching addr %0x\n", other.m_ptr+blk_h);
 
+        const int row_incr = (other.m_pitch-other.cols()+zmm_w);
+        // const int row_incr = zmm_w;
+
         for(int m1_row = 0; m1_row < rows(); m1_row++) {
             auto m1_iter = row_begin(m1_row);
             // Load outputs
@@ -351,11 +358,12 @@ namespace my {
             __m512d   out_3 = _mm512_load_pd(&(*out_iter));
             out_iter+=zmm_w;
 
+            auto m2_iter_0 = other.row_begin(0);
+
             for(int m2_row = 0; m2_row < other.rows(); m2_row+=4) {
-                auto m2_iter_0 = other.row_begin(m2_row+0);
-                auto m2_iter_1 = other.row_begin(m2_row+1);
-                auto m2_iter_2 = other.row_begin(m2_row+2);
-                auto m2_iter_3 = other.row_begin(m2_row+3);
+                // auto m2_iter_1 = other.row_begin(m2_row+1);
+                // auto m2_iter_2 = other.row_begin(m2_row+2);
+                // auto m2_iter_3 = other.row_begin(m2_row+3);
 
                 // Load 4 m1 values
                 __m512d m1_0 = _mm512_set1_pd(*m1_iter);
@@ -375,34 +383,34 @@ namespace my {
                 __m512d m2_02 = _mm512_load_pd(&(*m2_iter_0));
                 m2_iter_0+=zmm_w;
                 __m512d m2_03 = _mm512_load_pd(&(*m2_iter_0));
+                m2_iter_0+=row_incr;
+
+                __m512d m2_10 = _mm512_load_pd(&(*m2_iter_0));
                 m2_iter_0+=zmm_w;
+                __m512d m2_11 = _mm512_load_pd(&(*m2_iter_0));
+                m2_iter_0+=zmm_w;
+                __m512d m2_12 = _mm512_load_pd(&(*m2_iter_0));
+                m2_iter_0+=zmm_w;
+                __m512d m2_13 = _mm512_load_pd(&(*m2_iter_0));
+                m2_iter_0+=row_incr;
 
-                __m512d m2_10 = _mm512_load_pd(&(*m2_iter_1));
-                m2_iter_1+=zmm_w;
-                __m512d m2_11 = _mm512_load_pd(&(*m2_iter_1));
-                m2_iter_1+=zmm_w;
-                __m512d m2_12 = _mm512_load_pd(&(*m2_iter_1));
-                m2_iter_1+=zmm_w;
-                __m512d m2_13 = _mm512_load_pd(&(*m2_iter_1));
-                m2_iter_1+=zmm_w;
+                __m512d m2_20 = _mm512_load_pd(&(*m2_iter_0));
+                m2_iter_0+=zmm_w;
+                __m512d m2_21 = _mm512_load_pd(&(*m2_iter_0));
+                m2_iter_0+=zmm_w;
+                __m512d m2_22 = _mm512_load_pd(&(*m2_iter_0));
+                m2_iter_0+=zmm_w;
+                __m512d m2_23 = _mm512_load_pd(&(*m2_iter_0));
+                m2_iter_0+=row_incr;
 
-                __m512d m2_20 = _mm512_load_pd(&(*m2_iter_2));
-                m2_iter_2+=zmm_w;
-                __m512d m2_21 = _mm512_load_pd(&(*m2_iter_2));
-                m2_iter_2+=zmm_w;
-                __m512d m2_22 = _mm512_load_pd(&(*m2_iter_2));
-                m2_iter_2+=zmm_w;
-                __m512d m2_23 = _mm512_load_pd(&(*m2_iter_2));
-                m2_iter_2+=zmm_w;
-
-                __m512d m2_30 = _mm512_load_pd(&(*m2_iter_3));
-                m2_iter_3+=zmm_w;
-                __m512d m2_31 = _mm512_load_pd(&(*m2_iter_3));
-                m2_iter_3+=zmm_w;
-                __m512d m2_32 = _mm512_load_pd(&(*m2_iter_3));
-                m2_iter_3+=zmm_w;
-                __m512d m2_33 = _mm512_load_pd(&(*m2_iter_3));
-                m2_iter_3+=zmm_w;
+                __m512d m2_30 = _mm512_load_pd(&(*m2_iter_0));
+                m2_iter_0+=zmm_w;
+                __m512d m2_31 = _mm512_load_pd(&(*m2_iter_0));
+                m2_iter_0+=zmm_w;
+                __m512d m2_32 = _mm512_load_pd(&(*m2_iter_0));
+                m2_iter_0+=zmm_w;
+                __m512d m2_33 = _mm512_load_pd(&(*m2_iter_0));
+                m2_iter_0+=row_incr;
 
                 out_0 = _mm512_fmadd_pd(m1_0, m2_00, out_0);
                 out_1 = _mm512_fmadd_pd(m1_0, m2_01, out_1);
@@ -688,6 +696,7 @@ namespace my {
                     Mat<T> submat1 = submat(m1_row, k, d2, d1);
                     Mat<T> submat2 = other.submat(k, m2_col, d1, d2);
                     Mat<T> submat_out = out.submat(m1_row, m2_col, d2, d2);
+                    // Mat<T> submat2_copy = submat2.contiguous_copy();
                     if (block_mult_option == naive_block_multiply)
                         submat1.naive_multiply(submat2, submat_out);
                     else if (block_mult_option == cacheline_col_multiply)
@@ -696,8 +705,35 @@ namespace my {
                         submat1.opt_32x32_block_multiply_add(submat2, submat_out);
                     else if (block_mult_option == transp_block_multiply)
                         submat1.opt_32x32_block_multiply_add(submat2, submat_out);
-                    else if (block_mult_option == zmm_32x32_multiply)
+                    else if (block_mult_option == zmm_32x32_multiply) {
                         submat1.madd_32x32_zmm(submat2, submat_out);
+                        // submat1.madd_32x32_zmm(submat2_copy, submat_out);
+                    }
+                }
+            }
+        }
+        return out;
+    }
+
+    template <class T>
+    Mat<T> Mat<T>::bl_block_multiply(bl_mat<T>& other) {
+        // assert(m_cols == other.m_rows);
+
+        Mat<T> out(m_rows, other.m_cols*32);
+
+        for (auto iter = out.begin(); iter != out.end(); ++iter)
+            *iter = static_cast<T>(0);
+        
+        const int d1 = 32; const int d2 = 32; // use constexpr
+        for (int m1_row = 0; m1_row < rows(); m1_row+=d2) {
+            int m2_blk_col = 0;
+            for (int m2_col = 0; m2_col < other.m_cols*32; m2_col+=d2, m2_blk_col++) {
+                int m2_blk_row = 0;
+                for (int k = 0; k < cols(); k+=d1) {
+                    Mat<T> submat_out = out.submat(m1_row, m2_col, d2, d2);
+                    Mat<T> submat1 = submat(m1_row, k, d2, d1);
+                    submat1.madd_32x32_zmm(other(m2_blk_row, m2_blk_col), submat_out);
+                    m2_blk_row++;
                 }
             }
         }
@@ -772,6 +808,24 @@ namespace my {
             }
             base+=((pitch-blk_w)*sizeof(double));
         }
+    }
+
+    template <class T>
+    Mat<T> Mat<T>::contiguous_copy() {
+        Mat<T> new_mat(m_rows, m_cols);
+        auto iter = begin();
+        auto new_iter = new_mat.begin();
+
+        for (; iter != end(); ++iter, ++new_iter)
+            *new_iter = *iter;
+
+        // for (int row = 0; row < m_rows; row++) {
+        //     T *src = &((*this)(row, 0));
+        //     T *dst = &new_mat(row, 0);
+        //     memcpy(src, dst, m_cols*sizeof(T));
+        // }
+
+        return new_mat;
     }
 }
 
