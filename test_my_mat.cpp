@@ -391,6 +391,29 @@ bool test_bl_mult_perf(int rows, int cols) {
     return true;
 }
 
+bool test_all_bl_mult_perf(int rows, int cols) {
+    using T = double;
+    my::Mat<T> m1(random_mat<my::Mat<T>>(rows,cols));
+    my::Mat<T> m2(random_mat<my::Mat<T>>(cols,rows));
+
+    my::bl_mat<T> m2_bl(m2, 32, 32);
+    my::bl_mat<T> m1_bl(m1, 32, 32);
+    START_CLOCK;
+    my::bl_mat<T> m3_bl = m1_bl.mult(m2_bl);
+    STOP_CLOCK;
+    std::cout << "Time elapsed (block multiply) = " << TIME_ELAPSED << " us.\n";
+    std::cout << "m3(0,0) = " << m3_bl(0,0)(0,0) << " m3(rows-1,cols-1) = " << m3_bl(63,63)(31,31) << std::endl;
+
+    // my::Mat<int> m4 = m1*m2;
+
+    // if (m3 == m4)
+    //     return true;
+    // else
+    //     return false;
+    return true;
+}
+
+
 int main(int argc, char **argv) {
     int test_num = 0;
     if (argc > 1) {
@@ -438,14 +461,15 @@ int main(int argc, char **argv) {
         case 29: RUN_TEST (test_naive_mult_perf<double>); if(test_num) break;
 #endif
 
-        // case 100: RUN_TEST1(test_mult_perf<Eigen::MatrixXd>(2048,4096)); if(test_num) break;
+        case 100: RUN_TEST1(test_mult_perf<Eigen::MatrixXd>(2048,4096)); if(test_num) break;
 #ifdef ALL_TESTS
         case 101: RUN_TEST1(test_mult_perf<my::Mat<double>>(2048,4096)); if(test_num) break;
         case 102: RUN_TEST1(test_block_mult_perf<naive_block_multiply>(2048,4096)); if(test_num) break;
 #endif
         // case 103: RUN_TEST1(test_block_mult_perf<cacheline_col_multiply>(2048,4096)); if(test_num) break;
         // case 107: RUN_TEST1(test_block_mult_perf<zmm_32x32_multiply>(2048,4096)); if(test_num) break;
-        case 108: RUN_TEST1(test_bl_mult_perf(2048,4096)); if(test_num) break;
+        // case 108: RUN_TEST1(test_bl_mult_perf(2048,4096)); if(test_num) break;
+        // case 109: RUN_TEST1(test_all_bl_mult_perf(2048,4096)); if(test_num) break;
 #ifdef ALL_TESTS
         case 104: RUN_TEST1(test_block_mult_perf<cacheline_block_multiply>(2048,4096)); if(test_num) break;
         case 106: RUN_TEST1(test_block_mult_perf<cacheline_block_multiply>(128,128)); if(test_num) break;

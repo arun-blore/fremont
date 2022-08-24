@@ -342,8 +342,8 @@ namespace my {
         // printf ("m2 start address %0x\n", other.m_ptr);
         // printf ("Prefetching addr %0x\n", other.m_ptr+blk_h);
 
-        const int row_incr = (other.m_pitch-other.cols()+zmm_w);
-        // const int row_incr = zmm_w;
+        // const int row_incr = (other.m_pitch-other.cols()+zmm_w);
+        const int row_incr = zmm_w;
 
         for(int m1_row = 0; m1_row < rows(); m1_row++) {
             auto m1_iter = row_begin(m1_row);
