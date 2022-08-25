@@ -4,8 +4,9 @@
 #include <cstdlib>
 #include <iostream>
 #include "my_bl_mat.h"
+#include <papi.h>
 
-// #define ALL_TESTS
+#define ALL_TESTS
 
 using std::cout;
 using std::endl;
@@ -161,7 +162,9 @@ bool test_mult_perf(int rows, int cols) {
     T m1(random_mat<T>(rows, cols)), m2(random_mat<T>(cols, rows));
     T m3;
     START_CLOCK;
+    PAPI_hl_region_begin("matrix_multiply");
     m3 = m1*m2;
+    PAPI_hl_region_end("matrix_multiply");
     STOP_CLOCK;
     int duration = TIME_ELAPSED;
     std::cout << "Time elapsed = " << duration << " us.\n";
@@ -235,7 +238,9 @@ bool test_block_mult_perf(int rows, int cols) {
     my::Mat<T> m2(random_mat<my::Mat<T>>(cols,rows));
 
     START_CLOCK;
+    PAPI_hl_region_begin("matrix_multiply");
     my::Mat<T> m3 = m1.block_multiply<block_mult_option>(m2);
+    PAPI_hl_region_end("matrix_multiply");
     STOP_CLOCK;
     std::cout << "Time elapsed (block multiply) = " << TIME_ELAPSED << " us.\n";
     std::cout << "m3(0,0) = " << m3(0,0) << " m3(rows-1,cols-1) = " << m3(rows-1,rows-1) << std::endl;
@@ -375,9 +380,11 @@ bool test_bl_mult_perf(int rows, int cols) {
     my::Mat<T> m1(random_mat<my::Mat<T>>(rows,cols));
     my::Mat<T> m2(random_mat<my::Mat<T>>(cols,rows));
 
-    START_CLOCK;
     my::bl_mat<T> m2_bl(m2, 32, 32);
+    START_CLOCK;
+    PAPI_hl_region_begin("matrix_multiply");
     my::Mat<T> m3 = m1.bl_block_multiply(m2_bl);
+    PAPI_hl_region_end("matrix_multiply");
     STOP_CLOCK;
     std::cout << "Time elapsed (block multiply) = " << TIME_ELAPSED << " us.\n";
     std::cout << "m3(0,0) = " << m3(0,0) << " m3(rows-1,cols-1) = " << m3(rows-1,rows-1) << std::endl;
@@ -399,7 +406,9 @@ bool test_all_bl_mult_perf(int rows, int cols) {
     my::bl_mat<T> m2_bl(m2, 32, 32);
     my::bl_mat<T> m1_bl(m1, 32, 32);
     START_CLOCK;
+    PAPI_hl_region_begin("matrix_multiply");
     my::bl_mat<T> m3_bl = m1_bl.mult(m2_bl);
+    PAPI_hl_region_end("matrix_multiply");
     STOP_CLOCK;
     std::cout << "Time elapsed (block multiply) = " << TIME_ELAPSED << " us.\n";
     std::cout << "m3(0,0) = " << m3_bl(0,0)(0,0) << " m3(rows-1,cols-1) = " << m3_bl(63,63)(31,31) << std::endl;
@@ -466,10 +475,10 @@ int main(int argc, char **argv) {
         case 101: RUN_TEST1(test_mult_perf<my::Mat<double>>(2048,4096)); if(test_num) break;
         case 102: RUN_TEST1(test_block_mult_perf<naive_block_multiply>(2048,4096)); if(test_num) break;
 #endif
-        // case 103: RUN_TEST1(test_block_mult_perf<cacheline_col_multiply>(2048,4096)); if(test_num) break;
-        // case 107: RUN_TEST1(test_block_mult_perf<zmm_32x32_multiply>(2048,4096)); if(test_num) break;
-        // case 108: RUN_TEST1(test_bl_mult_perf(2048,4096)); if(test_num) break;
-        // case 109: RUN_TEST1(test_all_bl_mult_perf(2048,4096)); if(test_num) break;
+        case 103: RUN_TEST1(test_block_mult_perf<cacheline_col_multiply>(2048,4096)); if(test_num) break;
+        case 107: RUN_TEST1(test_block_mult_perf<zmm_32x32_multiply>(2048,4096)); if(test_num) break;
+        case 108: RUN_TEST1(test_bl_mult_perf(2048,4096)); if(test_num) break;
+        case 109: RUN_TEST1(test_all_bl_mult_perf(2048,4096)); if(test_num) break;
 #ifdef ALL_TESTS
         case 104: RUN_TEST1(test_block_mult_perf<cacheline_block_multiply>(2048,4096)); if(test_num) break;
         case 106: RUN_TEST1(test_block_mult_perf<cacheline_block_multiply>(128,128)); if(test_num) break;
