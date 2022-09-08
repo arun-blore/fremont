@@ -10,7 +10,7 @@
 #include <iostream>
 #include <new>
 #include <immintrin.h>
-#include "my_bl_mat.h"
+//#include "my_bl_mat.h"
 #include <cstdio>
 #include <papi.h>
 
@@ -22,6 +22,9 @@ const int zmm_32x32_multiply = 4;
 const int bytes_per_cacheline = 64;
 
 namespace my {
+    template <class T>
+    class bl_mat;
+
     void prefetch (void *base, int blk_w, int blk_h, int pitch);
 
     template <class T>
@@ -110,7 +113,7 @@ namespace my {
         int pitch() const;
         // Mat<T> add(Mat<T> const& other) const;
         Mat<T> operator+(Mat<T> const& other) const;
-        Mat<T> sub(Mat<T> const& other) const;
+        Mat<T> operator-(Mat<T> const& other) const;
         // Mat<T> mul(Mat<T> const& other) const;
         Mat<T> operator*(Mat<T> const& other) const;
         bool operator==(Mat<T> const&) const;
@@ -144,6 +147,8 @@ namespace my {
         Mat<T> transpose() const;
         void opt_transp_multiply_add(Mat<T> const& other, Mat<T> &out) const;
         void madd_32x32_zmm(Mat<T> &other, Mat<T> &out);
+        template <int R, int C>
+        void madd_RxC_zmm(Mat<T> &other, Mat<T> &out);
         Mat<T> contiguous_copy();
         Mat<T> bl_block_multiply(bl_mat<T>& other);
     };
@@ -305,6 +310,22 @@ namespace my {
     }
 
     template <class T>
+    Mat<T> Mat<T>::operator-(Mat<T> const& other) const {
+        assert(m_rows == other.m_rows);
+        assert(m_cols == other.m_cols);
+
+        Mat<T> out(m_rows, m_cols);
+        auto in1_iter = begin();
+        auto in2_iter = other.begin();
+        auto out_iter = out.begin();
+
+        for (; in1_iter != end(); ++in1_iter, ++in2_iter, ++out_iter) {
+            *out_iter = *in1_iter - *in2_iter;
+        }
+        return out;
+    }
+
+    template <class T>
     Mat<T> Mat<T>::operator*(Mat<T> const& other) const {
         // assert(m_cols == other.m_rows);
 
@@ -322,6 +343,150 @@ namespace my {
     }
 
     template <class T>
+    template <int R, int C>
+    void Mat<T>::madd_RxC_zmm(Mat<T> &other, Mat<T> &out) {
+        // const int R = 8, C = 16;
+        assert(rows() == R);
+        assert(cols() == C);
+        assert(other.rows() == C);
+        assert(other.cols() == R);
+        assert(out.rows() == R);
+        assert(out.cols() == R);
+
+        const int zmm_b = 64;
+        const int zmm_w = 64/sizeof(T);
+
+        if (R == 8 && C == 16) {
+            // assert(other.cols() % zmm_w == 0);
+            // const int row_incr = (other.m_pitch-other.cols()+zmm_w);
+            // const int zmms_per_out_row = out.cols()/zmm_w;
+
+            auto m2_iter = other.row_begin(0);
+            __m512d m2_0  = _mm512_load_pd(&(*m2_iter)+zmm_w*0 );
+            __m512d m2_1  = _mm512_load_pd(&(*m2_iter)+zmm_w*1 );
+            __m512d m2_2  = _mm512_load_pd(&(*m2_iter)+zmm_w*2 );
+            __m512d m2_3  = _mm512_load_pd(&(*m2_iter)+zmm_w*3 );
+            __m512d m2_4  = _mm512_load_pd(&(*m2_iter)+zmm_w*4 );
+            __m512d m2_5  = _mm512_load_pd(&(*m2_iter)+zmm_w*5 );
+            __m512d m2_6  = _mm512_load_pd(&(*m2_iter)+zmm_w*6 );
+            __m512d m2_7  = _mm512_load_pd(&(*m2_iter)+zmm_w*7 );
+            __m512d m2_8  = _mm512_load_pd(&(*m2_iter)+zmm_w*8 );
+            __m512d m2_9  = _mm512_load_pd(&(*m2_iter)+zmm_w*9 );
+            __m512d m2_10 = _mm512_load_pd(&(*m2_iter)+zmm_w*10);
+            __m512d m2_11 = _mm512_load_pd(&(*m2_iter)+zmm_w*11);
+            __m512d m2_12 = _mm512_load_pd(&(*m2_iter)+zmm_w*12);
+            __m512d m2_13 = _mm512_load_pd(&(*m2_iter)+zmm_w*13);
+            __m512d m2_14 = _mm512_load_pd(&(*m2_iter)+zmm_w*14);
+            __m512d m2_15 = _mm512_load_pd(&(*m2_iter)+zmm_w*15);
+
+            auto m1_iter = row_begin(0);
+            auto out_iter = out.row_begin(0);
+            for(int out_row = 0; out_row < out.rows(); out_row++) {
+                __m512d out_0;
+                out_0 = _mm512_load_pd(&(*out_iter));
+
+                __m512d m1_0  = _mm512_set1_pd(*m1_iter); ++m1_iter;
+                __m512d m1_1  = _mm512_set1_pd(*m1_iter); ++m1_iter;
+                __m512d m1_2  = _mm512_set1_pd(*m1_iter); ++m1_iter;
+                __m512d m1_3  = _mm512_set1_pd(*m1_iter); ++m1_iter;
+                __m512d m1_4  = _mm512_set1_pd(*m1_iter); ++m1_iter;
+                __m512d m1_5  = _mm512_set1_pd(*m1_iter); ++m1_iter;
+                __m512d m1_6  = _mm512_set1_pd(*m1_iter); ++m1_iter;
+                __m512d m1_7  = _mm512_set1_pd(*m1_iter); ++m1_iter;
+                __m512d m1_8  = _mm512_set1_pd(*m1_iter); ++m1_iter;
+                __m512d m1_9  = _mm512_set1_pd(*m1_iter); ++m1_iter;
+                __m512d m1_10 = _mm512_set1_pd(*m1_iter); ++m1_iter;
+                __m512d m1_11 = _mm512_set1_pd(*m1_iter); ++m1_iter;
+                __m512d m1_12 = _mm512_set1_pd(*m1_iter); ++m1_iter;
+                __m512d m1_13 = _mm512_set1_pd(*m1_iter); ++m1_iter;
+                __m512d m1_14 = _mm512_set1_pd(*m1_iter); ++m1_iter;
+                __m512d m1_15 = _mm512_set1_pd(*m1_iter); ++m1_iter;
+
+                out_0 = _mm512_fmadd_pd(m1_0 , m2_0 , out_0);
+                out_0 = _mm512_fmadd_pd(m1_1 , m2_1 , out_0);
+                out_0 = _mm512_fmadd_pd(m1_2 , m2_2 , out_0);
+                out_0 = _mm512_fmadd_pd(m1_3 , m2_3 , out_0);
+                out_0 = _mm512_fmadd_pd(m1_4 , m2_4 , out_0);
+                out_0 = _mm512_fmadd_pd(m1_5 , m2_5 , out_0);
+                out_0 = _mm512_fmadd_pd(m1_6 , m2_6 , out_0);
+                out_0 = _mm512_fmadd_pd(m1_7 , m2_7 , out_0);
+                out_0 = _mm512_fmadd_pd(m1_8 , m2_8 , out_0);
+                out_0 = _mm512_fmadd_pd(m1_9 , m2_9 , out_0);
+                out_0 = _mm512_fmadd_pd(m1_10, m2_10, out_0);
+                out_0 = _mm512_fmadd_pd(m1_11, m2_11, out_0);
+                out_0 = _mm512_fmadd_pd(m1_12, m2_12, out_0);
+                out_0 = _mm512_fmadd_pd(m1_13, m2_13, out_0);
+                out_0 = _mm512_fmadd_pd(m1_14, m2_14, out_0);
+                out_0 = _mm512_fmadd_pd(m1_15, m2_15, out_0);
+
+                _mm512_store_pd(&(*out_iter), out_0);
+                out_iter+=zmm_w;
+            }
+        } else if (R == 32 && C == 4) {
+            auto m2_iter = other.row_begin(0);
+            __m512d m2_00  = _mm512_load_pd(&(*m2_iter)+zmm_w*0 );
+            __m512d m2_01  = _mm512_load_pd(&(*m2_iter)+zmm_w*1 );
+            __m512d m2_02  = _mm512_load_pd(&(*m2_iter)+zmm_w*2 );
+            __m512d m2_03  = _mm512_load_pd(&(*m2_iter)+zmm_w*3 );
+            __m512d m2_10 = _mm512_load_pd(&(*m2_iter)+zmm_w*4 );
+            __m512d m2_11 = _mm512_load_pd(&(*m2_iter)+zmm_w*5 );
+            __m512d m2_12 = _mm512_load_pd(&(*m2_iter)+zmm_w*6 );
+            __m512d m2_13 = _mm512_load_pd(&(*m2_iter)+zmm_w*7 );
+            __m512d m2_20 = _mm512_load_pd(&(*m2_iter)+zmm_w*8 );
+            __m512d m2_21 = _mm512_load_pd(&(*m2_iter)+zmm_w*9 );
+            __m512d m2_22 = _mm512_load_pd(&(*m2_iter)+zmm_w*10);
+            __m512d m2_23 = _mm512_load_pd(&(*m2_iter)+zmm_w*11);
+            __m512d m2_30 = _mm512_load_pd(&(*m2_iter)+zmm_w*12);
+            __m512d m2_31 = _mm512_load_pd(&(*m2_iter)+zmm_w*13);
+            __m512d m2_32 = _mm512_load_pd(&(*m2_iter)+zmm_w*14);
+            __m512d m2_33 = _mm512_load_pd(&(*m2_iter)+zmm_w*15);
+
+            auto m1_iter = row_begin(0);
+            auto out_iter = out.row_begin(0);
+            for(int out_row = 0; out_row < out.rows(); out_row++) {
+                __m512d out_0, out_1, out_2, out_3;
+                out_0 = _mm512_load_pd(&(*out_iter)+0*zmm_w);
+                out_1 = _mm512_load_pd(&(*out_iter)+1*zmm_w);
+                out_2 = _mm512_load_pd(&(*out_iter)+2*zmm_w);
+                out_3 = _mm512_load_pd(&(*out_iter)+3*zmm_w);
+
+                __m512d m1_0  = _mm512_set1_pd(*m1_iter); ++m1_iter;
+                __m512d m1_1  = _mm512_set1_pd(*m1_iter); ++m1_iter;
+                __m512d m1_2  = _mm512_set1_pd(*m1_iter); ++m1_iter;
+                __m512d m1_3  = _mm512_set1_pd(*m1_iter); ++m1_iter;
+
+                out_0 = _mm512_fmadd_pd(m1_0 , m2_00 , out_0);
+                out_1 = _mm512_fmadd_pd(m1_0 , m2_01 , out_1);
+                out_2 = _mm512_fmadd_pd(m1_0 , m2_02 , out_2);
+                out_3 = _mm512_fmadd_pd(m1_0 , m2_03 , out_3);
+
+                out_0 = _mm512_fmadd_pd(m1_1 , m2_10 , out_0);
+                out_1 = _mm512_fmadd_pd(m1_1 , m2_11 , out_1);
+                out_2 = _mm512_fmadd_pd(m1_1 , m2_12 , out_2);
+                out_3 = _mm512_fmadd_pd(m1_1 , m2_13 , out_3);
+
+                out_0 = _mm512_fmadd_pd(m1_2 , m2_20 , out_0);
+                out_1 = _mm512_fmadd_pd(m1_2 , m2_21 , out_1);
+                out_2 = _mm512_fmadd_pd(m1_2 , m2_22 , out_2);
+                out_3 = _mm512_fmadd_pd(m1_2 , m2_23 , out_3);
+
+                out_0 = _mm512_fmadd_pd(m1_3 , m2_30 , out_0);
+                out_1 = _mm512_fmadd_pd(m1_3 , m2_31 , out_1);
+                out_2 = _mm512_fmadd_pd(m1_3 , m2_32 , out_2);
+                out_3 = _mm512_fmadd_pd(m1_3 , m2_33 , out_3);
+
+                _mm512_store_pd(&(*out_iter)+0*zmm_w, out_0);
+                _mm512_store_pd(&(*out_iter)+1*zmm_w, out_1);
+                _mm512_store_pd(&(*out_iter)+2*zmm_w, out_2);
+                _mm512_store_pd(&(*out_iter)+3*zmm_w, out_3);
+                out_iter+=(4*zmm_w);
+            }
+        } else {
+            std::cout << "Not implemented\n";
+        }
+    }
+
+    template <class T>
     void Mat<T>::madd_32x32_zmm(Mat<T> &other, Mat<T> &out) {
         assert(rows() == 32);
         assert(cols() == 32);
@@ -330,6 +495,7 @@ namespace my {
         assert(out.rows() == 32);
         assert(out.cols() == 32);
 
+        const int zmm_b = 64;
         const int zmm_w = 64/sizeof(T);
 
         const int blk_w = 32;
@@ -361,7 +527,7 @@ namespace my {
 
             auto m2_iter_0 = other.row_begin(0);
 
-            for(int m2_row = 0; m2_row < other.rows(); m2_row+=4) {
+            for(int m2_row = 0; m2_row < other.rows(); m2_row+=8) {
                 // auto m2_iter_1 = other.row_begin(m2_row+1);
                 // auto m2_iter_2 = other.row_begin(m2_row+2);
                 // auto m2_iter_3 = other.row_begin(m2_row+3);
@@ -375,43 +541,56 @@ namespace my {
                 ++m1_iter;
                 __m512d m1_3 = _mm512_set1_pd(*m1_iter);
                 ++m1_iter;
+                __m512d m1_4 = _mm512_set1_pd(*m1_iter);
+                ++m1_iter;
+                __m512d m1_5 = _mm512_set1_pd(*m1_iter);
+                ++m1_iter;
+                __m512d m1_6 = _mm512_set1_pd(*m1_iter);
+                ++m1_iter;
+                __m512d m1_7 = _mm512_set1_pd(*m1_iter);
+                ++m1_iter;
 
                 // Load 4 rows of m2 (16 zmms)
-                __m512d m2_00 = _mm512_load_pd(&(*m2_iter_0));
-                m2_iter_0+=zmm_w;
-                __m512d m2_01 = _mm512_load_pd(&(*m2_iter_0));
-                m2_iter_0+=zmm_w;
-                __m512d m2_02 = _mm512_load_pd(&(*m2_iter_0));
-                m2_iter_0+=zmm_w;
-                __m512d m2_03 = _mm512_load_pd(&(*m2_iter_0));
-                m2_iter_0+=row_incr;
+                __m512d m2_00 = _mm512_load_pd(&(*m2_iter_0)+zmm_w*0);
+                __m512d m2_01 = _mm512_load_pd(&(*m2_iter_0)+zmm_w*1);
+                __m512d m2_02 = _mm512_load_pd(&(*m2_iter_0)+zmm_w*2);
+                __m512d m2_03 = _mm512_load_pd(&(*m2_iter_0)+zmm_w*3);
 
-                __m512d m2_10 = _mm512_load_pd(&(*m2_iter_0));
-                m2_iter_0+=zmm_w;
-                __m512d m2_11 = _mm512_load_pd(&(*m2_iter_0));
-                m2_iter_0+=zmm_w;
-                __m512d m2_12 = _mm512_load_pd(&(*m2_iter_0));
-                m2_iter_0+=zmm_w;
-                __m512d m2_13 = _mm512_load_pd(&(*m2_iter_0));
-                m2_iter_0+=row_incr;
+                __m512d m2_10 = _mm512_load_pd(&(*m2_iter_0)+zmm_w*4);
+                __m512d m2_11 = _mm512_load_pd(&(*m2_iter_0)+zmm_w*5);
+                __m512d m2_12 = _mm512_load_pd(&(*m2_iter_0)+zmm_w*6);
+                __m512d m2_13 = _mm512_load_pd(&(*m2_iter_0)+zmm_w*7);
 
-                __m512d m2_20 = _mm512_load_pd(&(*m2_iter_0));
-                m2_iter_0+=zmm_w;
-                __m512d m2_21 = _mm512_load_pd(&(*m2_iter_0));
-                m2_iter_0+=zmm_w;
-                __m512d m2_22 = _mm512_load_pd(&(*m2_iter_0));
-                m2_iter_0+=zmm_w;
-                __m512d m2_23 = _mm512_load_pd(&(*m2_iter_0));
-                m2_iter_0+=row_incr;
+                __m512d m2_20 = _mm512_load_pd(&(*m2_iter_0)+zmm_w*8);
+                __m512d m2_21 = _mm512_load_pd(&(*m2_iter_0)+zmm_w*9);
+                __m512d m2_22 = _mm512_load_pd(&(*m2_iter_0)+zmm_w*10);
+                __m512d m2_23 = _mm512_load_pd(&(*m2_iter_0)+zmm_w*11);
 
-                __m512d m2_30 = _mm512_load_pd(&(*m2_iter_0));
-                m2_iter_0+=zmm_w;
-                __m512d m2_31 = _mm512_load_pd(&(*m2_iter_0));
-                m2_iter_0+=zmm_w;
-                __m512d m2_32 = _mm512_load_pd(&(*m2_iter_0));
-                m2_iter_0+=zmm_w;
-                __m512d m2_33 = _mm512_load_pd(&(*m2_iter_0));
-                m2_iter_0+=row_incr;
+                __m512d m2_30 = _mm512_load_pd(&(*m2_iter_0)+zmm_w*12);
+                __m512d m2_31 = _mm512_load_pd(&(*m2_iter_0)+zmm_w*13);
+                __m512d m2_32 = _mm512_load_pd(&(*m2_iter_0)+zmm_w*14);
+                __m512d m2_33 = _mm512_load_pd(&(*m2_iter_0)+zmm_w*15);
+
+                __m512d m2_40 = _mm512_load_pd(&(*m2_iter_0)+zmm_w*16);
+                __m512d m2_41 = _mm512_load_pd(&(*m2_iter_0)+zmm_w*17);
+                __m512d m2_42 = _mm512_load_pd(&(*m2_iter_0)+zmm_w*18);
+                __m512d m2_43 = _mm512_load_pd(&(*m2_iter_0)+zmm_w*19);
+
+                __m512d m2_50 = _mm512_load_pd(&(*m2_iter_0)+zmm_w*20);
+                __m512d m2_51 = _mm512_load_pd(&(*m2_iter_0)+zmm_w*21);
+                __m512d m2_52 = _mm512_load_pd(&(*m2_iter_0)+zmm_w*22);
+                __m512d m2_53 = _mm512_load_pd(&(*m2_iter_0)+zmm_w*23);
+
+                __m512d m2_60 = _mm512_load_pd(&(*m2_iter_0)+zmm_w*24);
+                __m512d m2_61 = _mm512_load_pd(&(*m2_iter_0)+zmm_w*25);
+                __m512d m2_62 = _mm512_load_pd(&(*m2_iter_0)+zmm_w*26);
+                __m512d m2_63 = _mm512_load_pd(&(*m2_iter_0)+zmm_w*27);
+
+                __m512d m2_70 = _mm512_load_pd(&(*m2_iter_0)+zmm_w*28);
+                __m512d m2_71 = _mm512_load_pd(&(*m2_iter_0)+zmm_w*29);
+                __m512d m2_72 = _mm512_load_pd(&(*m2_iter_0)+zmm_w*30);
+                __m512d m2_73 = _mm512_load_pd(&(*m2_iter_0)+zmm_w*31);
+                m2_iter_0+=(zmm_w*32);
 
                 out_0 = _mm512_fmadd_pd(m1_0, m2_00, out_0);
                 out_1 = _mm512_fmadd_pd(m1_0, m2_01, out_1);
@@ -432,6 +611,26 @@ namespace my {
                 out_1 = _mm512_fmadd_pd(m1_3, m2_31, out_1);
                 out_2 = _mm512_fmadd_pd(m1_3, m2_32, out_2);
                 out_3 = _mm512_fmadd_pd(m1_3, m2_33, out_3);
+
+                out_0 = _mm512_fmadd_pd(m1_4, m2_40, out_0);
+                out_1 = _mm512_fmadd_pd(m1_4, m2_41, out_1);
+                out_2 = _mm512_fmadd_pd(m1_4, m2_42, out_2);
+                out_3 = _mm512_fmadd_pd(m1_4, m2_43, out_3);
+
+                out_0 = _mm512_fmadd_pd(m1_5, m2_50, out_0);
+                out_1 = _mm512_fmadd_pd(m1_5, m2_51, out_1);
+                out_2 = _mm512_fmadd_pd(m1_5, m2_52, out_2);
+                out_3 = _mm512_fmadd_pd(m1_5, m2_53, out_3);
+
+                out_0 = _mm512_fmadd_pd(m1_6, m2_60, out_0);
+                out_1 = _mm512_fmadd_pd(m1_6, m2_61, out_1);
+                out_2 = _mm512_fmadd_pd(m1_6, m2_62, out_2);
+                out_3 = _mm512_fmadd_pd(m1_6, m2_63, out_3);
+
+                out_0 = _mm512_fmadd_pd(m1_7, m2_70, out_0);
+                out_1 = _mm512_fmadd_pd(m1_7, m2_71, out_1);
+                out_2 = _mm512_fmadd_pd(m1_7, m2_72, out_2);
+                out_3 = _mm512_fmadd_pd(m1_7, m2_73, out_3);
 
             }
             out_iter = out.row_begin(m1_row);

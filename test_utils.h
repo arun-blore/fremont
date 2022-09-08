@@ -4,6 +4,7 @@
 #include <iostream>
 #include <chrono>
 
+#define COMMA ,
 #define RUN_TEST(func) func() ? std::cout<<#func" passed"<<std::endl : std::cout<<#func" failed"<<std::endl
 #define RUN_TEST1(func) func ? std::cout<<#func" passed"<<std::endl : std::cout<<#func" failed"<<std::endl
 

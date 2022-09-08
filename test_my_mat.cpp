@@ -1,15 +1,24 @@
-#include "my_mat.h"
-#include "test_utils.h"
-#include <Eigen/Dense>
 #include <cstdlib>
 #include <iostream>
-#include "my_bl_mat.h"
 #include <papi.h>
+#include "my_mat.h"
+#include "my_bl_mat.h"
+#include "test_utils.h"
+#include <Eigen/Dense>
 
 #define ALL_TESTS
 
 using std::cout;
 using std::endl;
+
+template <class T>
+my::Mat<T> zero_mat(int rows, int cols) {
+    my::Mat<T> m(rows, cols);
+    for (auto &el : m) {
+        el = static_cast<T>(0);
+    }
+    return m;
+}
 
 template <class T>
 T random_mat(int rows, int cols) {
@@ -373,9 +382,30 @@ bool test_bl_multiply() {
     bool match = (m3 == m4);
     return match;
 }
+
+bool test_madd_RxC_zmm() {
+    using T = double;
+    const int rows = 8, cols = 16;
+    my::Mat<T> m1(random_mat<my::Mat<T>>(rows, cols));
+    my::Mat<T> m2(random_mat<my::Mat<T>>(cols, rows));
+
+    my::Mat<T> m3(m1*m2);
+    my::Mat<T> m4(zero_mat<T>(rows, rows));
+    m1.madd_RxC_zmm<rows, cols>(m2, m4);
+
+    // std::cout << m3 << std::endl << std::endl;
+    // std::cout << m4 << std::endl << std::endl;
+    // std::cout << m3-m4;
+
+    if (m3 == m4)
+        return true;
+    else
+        return false;
+}
 #endif
 
 bool test_bl_mult_perf(int rows, int cols) {
+    // Only m2 is stored as block linear
     using T = double;
     my::Mat<T> m1(random_mat<my::Mat<T>>(rows,cols));
     my::Mat<T> m2(random_mat<my::Mat<T>>(cols,rows));
@@ -407,7 +437,7 @@ bool test_all_bl_mult_perf(int rows, int cols) {
     my::bl_mat<T> m1_bl(m1, 32, 32);
     START_CLOCK;
     PAPI_hl_region_begin("matrix_multiply");
-    my::bl_mat<T> m3_bl = m1_bl.mult(m2_bl);
+    my::bl_mat<T> m3_bl = m1_bl.mult<32, 32>(m2_bl);
     PAPI_hl_region_end("matrix_multiply");
     STOP_CLOCK;
     std::cout << "Time elapsed (block multiply) = " << TIME_ELAPSED << " us.\n";
@@ -422,6 +452,32 @@ bool test_all_bl_mult_perf(int rows, int cols) {
     return true;
 }
 
+template <int BLK_H, int BLK_W>
+bool test_bl_mult_perf_blksz (int rows, int cols) {
+    using T = double;
+    my::Mat<T> m1(random_mat<my::Mat<T>>(rows,cols));
+    my::Mat<T> m2(random_mat<my::Mat<T>>(cols,rows));
+
+    my::bl_mat<T> m1_bl(m1, BLK_W, BLK_H);
+    my::bl_mat<T> m2_bl(m2, BLK_H, BLK_W);
+    START_CLOCK;
+    PAPI_hl_region_begin("matrix_multiply");
+    my::bl_mat<T> m3_bl = m1_bl.mult<BLK_H, BLK_W>(m2_bl);
+    PAPI_hl_region_end("matrix_multiply");
+    STOP_CLOCK;
+    std::cout << "Time elapsed (block multiply) = " << TIME_ELAPSED << " us.\n";
+    // std::cout << "m3(0,0) = " << m3_bl(0,0)(0,0) << " m3(rows-1,cols-1) = " << m3_bl(63,63)(31,31) << std::endl;
+    my::Mat<T> m3 = m3_bl.to_mat();
+    std::cout << "m3(0,0) = " << m3(0,0) << " m3(rows-1,cols-1) = " << m3(rows-1,rows-1) << std::endl;
+
+    // my::Mat<int> m4 = m1*m2;
+
+    // if (m3 == m4)
+    //     return true;
+    // else
+    //     return false;
+    return true;
+}
 
 int main(int argc, char **argv) {
     int test_num = 0;
@@ -452,6 +508,7 @@ int main(int argc, char **argv) {
         case 99: RUN_TEST(test_transp_multiply_add); if(test_num) break;
         case 80: RUN_TEST(test_bl); if(test_num) break;
         case 81: RUN_TEST(test_bl_multiply); if(test_num) break;
+        case 82: RUN_TEST(test_madd_RxC_zmm); if(test_num) break;
 
         // Vector dot product
         case 10: RUN_TEST1(test_mult_perf<my::Mat<double>>(1,100000000)); if(test_num) break;
@@ -477,8 +534,10 @@ int main(int argc, char **argv) {
 #endif
         case 103: RUN_TEST1(test_block_mult_perf<cacheline_col_multiply>(2048,4096)); if(test_num) break;
         case 107: RUN_TEST1(test_block_mult_perf<zmm_32x32_multiply>(2048,4096)); if(test_num) break;
-        case 108: RUN_TEST1(test_bl_mult_perf(2048,4096)); if(test_num) break;
+        // case 108: RUN_TEST1(test_bl_mult_perf(2048,4096)); if(test_num) break;
         case 109: RUN_TEST1(test_all_bl_mult_perf(2048,4096)); if(test_num) break;
+        case 111: RUN_TEST1(test_bl_mult_perf_blksz<8 COMMA 16>(2048,4096)); if(test_num) break;
+        case 112: RUN_TEST1(test_bl_mult_perf_blksz<32 COMMA 4>(2048,4096)); if(test_num) break;
 #ifdef ALL_TESTS
         case 104: RUN_TEST1(test_block_mult_perf<cacheline_block_multiply>(2048,4096)); if(test_num) break;
         case 106: RUN_TEST1(test_block_mult_perf<cacheline_block_multiply>(128,128)); if(test_num) break;

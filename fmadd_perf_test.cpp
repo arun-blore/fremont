@@ -5,6 +5,7 @@
 #include <string>
 #include <cstring>
 #include <immintrin.h>
+#include <papi.h>
 
 const int l = 32;
 
@@ -104,7 +105,7 @@ void matmul_32x32 () {
         out[i] = 0.0f;
     }
 
-    int niter = 10000;
+    int niter = 524288;
 
     for (int i = 0; i < niter; i++) {
         for (int m1_row = 0; m1_row < h; m1_row++) {
@@ -122,6 +123,7 @@ void matmul_32x32 () {
 
     int zmm_w = 8;
     START_CLOCK;
+    PAPI_hl_region_begin("fmadd_perf_matrix_multiply");
     for (int i = 0; i < niter; i++) {
         for (int m1_row = 0; m1_row < h; m1_row++) {
             for (int m1_col = 0; m1_col < w; m1_col+=4) {
@@ -206,6 +208,7 @@ void matmul_32x32 () {
             }
         }
     }
+    PAPI_hl_region_end("fmadd_perf_matrix_multiply");
     STOP_CLOCK;
     std::cout << "matmul_32x32 Time elapsed = " << TIME_ELAPSED << "\n";
 
