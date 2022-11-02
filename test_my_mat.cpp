@@ -5,11 +5,13 @@
 #include "my_bl_mat.h"
 #include "test_utils.h"
 #include <Eigen/Dense>
+#include <algorithm>
 
 #define ALL_TESTS
 
 using std::cout;
 using std::endl;
+using std::for_each;
 
 template <class T>
 my::Mat<T> zero_mat(int rows, int cols) {
@@ -479,6 +481,26 @@ bool test_bl_mult_perf_blksz (int rows, int cols) {
     return true;
 }
 
+bool test_foreach_row_col () {
+    my::Mat<int> m(random_mat<my::Mat<int>>(5,5));
+    cout << m << endl;
+    for_each(m.row_iter_begin(), m.row_iter_end(), [](my::Mat<int> const& row_mat) {cout << row_mat;});
+    cout << endl;
+    for_each(m.col_iter_begin(), m.col_iter_end(), [](my::Mat<int> const& col_mat) {cout << col_mat;});
+    return true;
+}
+
+bool test_matmul_foreach () {
+    my::Mat<int> m1(random_mat<my::Mat<int>>(5,5));
+    my::Mat<int> m2(random_mat<my::Mat<int>>(5,5));
+    cout << m1 << endl << m2 << endl;
+    my::Mat<int> out(5,5);
+    m1.naive_multiply_foreach(m2, out);
+    cout << out;
+
+    return (m1*m2 == out);
+}
+
 int main(int argc, char **argv) {
     int test_num = 0;
     if (argc > 1) {
@@ -509,6 +531,8 @@ int main(int argc, char **argv) {
         case 80: RUN_TEST(test_bl); if(test_num) break;
         case 81: RUN_TEST(test_bl_multiply); if(test_num) break;
         case 82: RUN_TEST(test_madd_RxC_zmm); if(test_num) break;
+        case 83: RUN_TEST(test_foreach_row_col); if (test_num) break;
+        case 84: RUN_TEST(test_matmul_foreach); if (test_num) break;
 
         // Vector dot product
         case 10: RUN_TEST1(test_mult_perf<my::Mat<double>>(1,100000000)); if(test_num) break;

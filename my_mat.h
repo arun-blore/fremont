@@ -13,6 +13,10 @@
 //#include "my_bl_mat.h"
 #include <cstdio>
 #include <papi.h>
+#include <algorithm>
+#include <numeric>
+#include <execution>
+#include "my_pair_iter.h"
 
 const int naive_block_multiply = 0;
 const int cacheline_col_multiply = 1;
@@ -20,6 +24,13 @@ const int cacheline_block_multiply = 2;
 const int transp_block_multiply = 3;
 const int zmm_32x32_multiply = 4;
 const int bytes_per_cacheline = 64;
+
+using std::cout;
+using std::endl;
+using std::for_each;
+using std::transform;
+using std::transform_reduce;
+//using std::execution;
 
 namespace my {
     template <class T>
@@ -61,8 +72,9 @@ namespace my {
         }
     };
 
+    // Iterator to access elements in a row/col
     template <class T>
-    class Mat_row_col_iterator {
+    class Mat_row_col_iterator : public std::iterator<std::forward_iterator_tag, T> {
         T *m_ptr{nullptr};
         int m_incr;
 
@@ -83,6 +95,63 @@ namespace my {
         }
         void operator+=(int inc) {
             m_ptr+=inc;
+        }
+    };
+
+    template <class T>
+    class Mat;
+
+    // Iterator to access a matrix row by row
+    template <class T>
+    class Mat_row_iterator : public std::iterator<std::forward_iterator_tag, Mat<T>> {
+        int m_row;
+        Mat<T> const&m_mat;
+
+        public:
+        Mat_row_iterator(int row, Mat<T> const& mat) : m_row(row), m_mat(mat) {}
+
+        Mat<T> operator*() {
+            return m_mat.submat(m_row, 0, 1, m_mat.cols());
+        }
+
+        Mat<T> operator++() {
+            m_row++;
+            return m_mat.submat(m_row, 0, 1, m_mat.cols());
+        }
+
+        bool operator==(Mat_row_iterator<T> const& other) {
+            return ((m_row == other.m_row) && (&m_mat(0,0) == &other.m_mat(0,0)));
+        }
+
+        bool operator!=(Mat_row_iterator<T> const& other) {
+            return !((*this) == other);
+        }
+    };
+
+    // Iterator to access a matrix col by col
+    template <class T>
+    class Mat_col_iterator : public std::iterator<std::forward_iterator_tag, Mat<T>> {
+        int m_col;
+        const Mat<T> &m_mat;
+
+        public:
+        Mat_col_iterator(int col, Mat<T> const& mat) : m_col(col), m_mat(mat) {}
+
+        Mat<T> operator*() {
+            return m_mat.submat(0, m_col, m_mat.rows(), 1);
+        }
+
+        Mat<T> operator++() {
+            m_col++;
+            return m_mat.submat(m_col, 0, 1, m_mat.cols());
+        }
+
+        bool operator==(Mat_col_iterator<T> const& other) {
+            return ((m_col == other.m_col) && (&m_mat(0,0) == &other.m_mat(0,0)));
+        }
+
+        bool operator!=(Mat_col_iterator<T> const& other) {
+            return !((*this) == other);
         }
     };
 
@@ -116,6 +185,7 @@ namespace my {
         Mat<T> operator-(Mat<T> const& other) const;
         // Mat<T> mul(Mat<T> const& other) const;
         Mat<T> operator*(Mat<T> const& other) const;
+        Mat<T> operator*(T scalar) const;
         bool operator==(Mat<T> const&) const;
         bool operator!=(Mat<T> const&) const;
         friend std::ostream& operator<<(std::ostream& stream, Mat<T> const& m) {
@@ -135,6 +205,10 @@ namespace my {
         Mat_row_col_iterator<T> row_end(int row) const;
         Mat_row_col_iterator<T> col_begin(int col) const;
         Mat_row_col_iterator<T> col_end(int col) const;
+        Mat_row_iterator<T> row_iter_begin() const;
+        Mat_row_iterator<T> row_iter_end() const;
+        Mat_col_iterator<T> col_iter_begin() const;
+        Mat_col_iterator<T> col_iter_end() const;
 
         void naive_multiply(Mat<T> const& other, Mat<T> &out) const;
         template <int block_mult_option> Mat<T> block_multiply(Mat<T> const& other) const;
@@ -151,7 +225,18 @@ namespace my {
         void madd_RxC_zmm(Mat<T> &other, Mat<T> &out);
         Mat<T> contiguous_copy();
         Mat<T> bl_block_multiply(bl_mat<T>& other);
+        void naive_multiply_foreach(Mat<T> & other, Mat<T> &out);
     };
+
+    template <class T>
+    pair_iter<Mat_row_col_iterator<T>, Mat_row_col_iterator<T>, T, T> pair_row_col_iter_begin(Mat<T> const&m1, Mat<T> const&m2, int row_col) {
+        return pair_iter<Mat_row_col_iterator<T>, Mat_row_col_iterator<T>, T, T>(m1.row_begin(row_col), m2.col_begin(row_col));
+    }
+    
+    template <class T>
+    pair_iter<Mat_row_col_iterator<T>, Mat_row_col_iterator<T>, T, T> pair_row_col_iter_end  (Mat<T> const&m1, Mat<T> const&m2, int row_col) {
+        return pair_iter<Mat_row_col_iterator<T>, Mat_row_col_iterator<T>, T, T>(m1.row_end(row_col), m2.col_end(row_col));
+    }
 
     template <class T>
     Mat<T>::Mat(int rows, int cols) : m_rows(rows), m_cols(cols), m_pitch(m_cols), m_data(new(std::align_val_t(bytes_per_cacheline)) T[m_rows*m_pitch]), m_ptr(m_data.get()) {
@@ -273,6 +358,26 @@ namespace my {
     }
 
     template <class T>
+    Mat_row_iterator<T> Mat<T>::row_iter_begin() const {
+        return Mat_row_iterator<T>(0, *this);
+    }
+
+    template <class T>
+    Mat_row_iterator<T> Mat<T>::row_iter_end() const {
+        return Mat_row_iterator<T>(rows(), *this);
+    }
+
+    template <class T>
+    Mat_col_iterator<T> Mat<T>::col_iter_begin() const {
+        return Mat_col_iterator<T>(0, *this);
+    }
+
+    template <class T>
+    Mat_col_iterator<T> Mat<T>::col_iter_end() const {
+        return Mat_col_iterator<T>(cols(), *this);
+    }
+
+    template <class T>
     bool Mat<T>::operator==(Mat<T> const& other) const {
         if ((m_rows != other.m_rows) || (m_cols != other.m_cols))
             return false;
@@ -339,6 +444,13 @@ namespace my {
                 out(i,j) = pp;
             }
         }
+        return out;
+    }
+
+    template <class T>
+    Mat<T> Mat<T>::operator*(T scalar) const {
+        Mat<T> out(rows(), cols());
+        transform(begin(), end(), out.begin(), [scalar](T value){return value*scalar;});
         return out;
     }
 
@@ -803,6 +915,79 @@ namespace my {
             }
         }
     }
+
+    /*
+    template <class T>
+    void Mat<T>::naive_multiply_foreach(Mat<T> const&other, Mat<T> &out) {
+        assert(m_cols == other.m_rows);
+
+        auto out_iter = out.begin();
+        for_each (row_iter_begin(), row_iter_end(), [&other, &out_iter](Mat<T> const& row_mat) {
+            for_each (other.col_iter_begin(), other.col_iter_end(), [&row_mat, &out_iter](Mat<T> const& col_mat) {
+                // cout << "Row: " << row_mat << endl;
+                // cout << "Col: " << endl << col_mat;
+                auto iter1 = row_mat.begin();
+                auto iter2 = col_mat.begin();
+                int sum = 0;
+                for (; iter1 != row_mat.end(); ++iter1, ++iter2) {
+                    sum += (*iter1) * (*iter2);
+                    // cout << *iter1 << ", " << *iter2 << ", " << *out_iter << endl;
+                }
+                *out_iter = sum;
+                ++out_iter;
+            });
+        });
+    }
+    */
+
+    template <class T>
+    void Mat<T>::naive_multiply_foreach(Mat<T> &other, Mat<T> &out) {
+        assert(m_cols == other.m_rows);
+
+        auto out_iter = out.begin();
+        for_each (std::execution::par, row_iter_begin(), row_iter_end(), [&other, &out_iter](Mat<T> const& row_mat) {
+            for_each (std::execution::par, other.col_iter_begin(), other.col_iter_end(), [&row_mat, &out_iter](Mat<T> const& col_mat) {
+                // cout << "Row: " << row_mat << endl;
+                // cout << "Col: " << endl << col_mat;
+                // auto iter1 = row_mat.begin();
+                // auto iter2 = col_mat.begin();
+                int sum = 0;
+                // for (; iter1 != row_mat.end(); ++iter1, ++iter2) {
+                //     sum += (*iter1) * (*iter2);
+                //     // cout << *iter1 << ", " << *iter2 << ", " << *out_iter << endl;
+                // }
+                for_each(std::execution::par, pair_row_col_iter_begin<T>(row_mat, col_mat, 0), pair_row_col_iter_end<T>(row_mat, col_mat, 0), [&sum](pair<T, T> val) {sum += val.first * val.second;});
+                *out_iter = sum;
+                ++out_iter;
+            });
+        });
+    }
+
+    /*
+    template <class T>
+    void Mat<T>::naive_multiply_foreach(Mat<T> &other, Mat<T> &out) {
+        assert(m_cols == other.m_rows);
+
+        auto out_iter = out.begin();
+        transform (row_iter_begin(), row_iter_end(), out.row_iter_begin(), [&](Mat<T> const& row_mat) {
+            Mat<T> zero_mat(1, other.cols());
+            for_each(zero_mat.begin(), zero_mat.end(), [&](T &value){value = 0;});
+            return transform_reduce (row_mat.begin(), row_mat.end(), other.row_iter_begin(), zero_mat,
+                [&](Mat<T> const&m1, Mat<T> const&m2) {return m1+m2;}, // reduce
+                [&](T scalar, Mat<T> const& m) {return m*scalar;}); // transform
+        });
+    }
+    */
+
+    /*
+    template <class T>
+    void Mat<T>::naive_multiply_transform(Mat<T> &other, Mat<T> &out) {
+        transform (row_iter_begin(), row_iter_end(), out.row_iter_begin(), [this, &other](Mat<T> &row_mat) {
+            // return (row_mat * other);
+
+        });
+    }
+    */
 
     template <class T>
     void Mat<T>::opt_8x8_block_multiply_add(Mat<T> const& other, Mat<T> &out) const {
